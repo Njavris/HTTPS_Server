@@ -1,0 +1,9 @@
+[submodule "external/libressl"]
+	path = external/libressl
+	url = https://github.com/libressl/portable.git
+[submodule "external/luajit"]
+	path = external/luajit
+	url = https://luajit.org/git/luajit.git
+[submodule "external/sqlite"]
+	path = external/sqlite
+	url = git@github.com:sqlite/sqlite.git
