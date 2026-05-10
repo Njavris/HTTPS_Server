@@ -19,7 +19,11 @@ int l_send_response(lua_State* L) {
 	lua_pop(L, 1);
 
 	lua_getfield(L, 2, "body");
-	if (lua_isstring(L, -1)) res.body = lua_tostring(L, -1);
+	if (lua_isstring(L, -1)) {
+		size_t len;
+		const char* data = lua_tolstring(L, -1, &len);
+		res.body.assign(data, len);
+	}
 	lua_pop(L, 1);
 
 	lua_getfield(L, 2, "headers");
@@ -111,9 +115,16 @@ int l_db_query(lua_State* L) {
 		int cols = sqlite3_column_count(stmt);
 		for (int i = 0; i < cols; i++) {
 			const char* name = sqlite3_column_name(stmt, i);
-			const char* val = (const char*)sqlite3_column_text(stmt, i);
+			int type = sqlite3_column_type(stmt, i);
 
-			lua_pushstring(L, val ? val : "");
+			if (type == SQLITE_BLOB) {
+				const void* blob_data = sqlite3_column_blob(stmt, i);
+				int blob_len = sqlite3_column_bytes(stmt, i);
+				lua_pushlstring(L, (const char*)blob_data, blob_len);
+			} else {
+				const char* val = (const char*)sqlite3_column_text(stmt, i);
+				lua_pushstring(L, val ? val : "");
+			}
 			lua_setfield(L, -2, name);
 		}
 		lua_settable(L, -3);
@@ -202,6 +213,33 @@ int l_save_file(lua_State* L) {
 	return 1;
 }
 
+int l_db_exec_blob(lua_State* L) {
+	const char* sql = luaL_checkstring(L, 1);
+	lua_getfield(L, LUA_REGISTRYINDEX, "db_handle");
+	sqlite3* db = (sqlite3*)lua_touserdata(L, -1);
+
+	size_t len;
+	const char* data = lua_tolstring(L, 2, &len); 
+
+	sqlite3_stmt* stmt;
+	if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+		lua_pushboolean(L, 0);
+		return 1;
+	}
+
+	sqlite3_bind_blob(stmt, 1, data, len, SQLITE_TRANSIENT);
+
+	if (sqlite3_step(stmt) != SQLITE_DONE) {
+		sqlite3_finalize(stmt);
+		lua_pushboolean(L, 0);
+		return 1;
+	}
+
+	sqlite3_finalize(stmt);
+	lua_pushboolean(L, 1);
+	return 1;
+}
+
 LuaThreadEnv::LuaThreadEnv() {
 	L = luaL_newstate();
 	luaL_openlibs(L);
@@ -217,6 +255,7 @@ LuaThreadEnv::LuaThreadEnv() {
 
 	lua_register(L, "db_exec", l_db_exec);
 	lua_register(L, "db_query", l_db_query);
+	lua_register(L, "db_exec_blob", l_db_exec_blob);
 	lua_register(L, "send_response", l_send_response);
 	lua_register(L, "hash_password", l_hash_password);
 	lua_register(L, "verify_password", l_verify_password);
