@@ -70,7 +70,7 @@ int l_db_exec(lua_State* L) {
 	if (!db) {
 		return luaL_error(L, "Database handle is NULL");
 	}
-	linfo << "Executing SQL on Handle [" << (void*)db << "]" << sql << "\n";
+	linfo << "Executing SQL on Handle [" << (void*)db << "]" << sql << log::endl;
 
 	char* zErrMsg = nullptr;
 	int rc = sqlite3_exec(db, sql, nullptr, nullptr, &zErrMsg);
@@ -96,11 +96,11 @@ int l_db_query(lua_State* L) {
 	if (!db) {
 		return luaL_error(L, "Database handle is NULL");
 	}
-	linfo << "SQL query on Handle [" << (void*)db << "]" << sql << "\n";
+	linfo << "SQL query on Handle [" << (void*)db << "]" << sql << log::endl;
 
 	sqlite3_stmt* stmt;
 	if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-		lerr << "SQL Error: " << sqlite3_errmsg(db) << "\n";
+		lerr << "SQL Error: " << sqlite3_errmsg(db) << log::endl;
 		lua_newtable(L);
 		return 1;
 	}
@@ -247,7 +247,7 @@ LuaThreadEnv::LuaThreadEnv() {
 	std::string sqlDbFile = globalCfg.getConfigFS("server", "sql_db_file", "");
 
 	if (sqlite3_open(sqlDbFile.c_str(), &db) != SQLITE_OK) {
-		lerr << "SQL Open Error: " << sqlite3_errmsg(db) << "\n";
+		lerr << "SQL Open Error: " << sqlite3_errmsg(db) << log::endl;
 	}
 
 	lua_pushlightuserdata(L, db);
@@ -263,7 +263,7 @@ LuaThreadEnv::LuaThreadEnv() {
 	lua_register(L, "save_file", l_save_file);
 
 	if (luaL_dofile(L, serveFile.c_str()) != LUA_OK) {
-		lerr << "Lua Load Error: " << lua_tostring(L, -1) << "\n";
+		lerr << "Lua Load Error: " << lua_tostring(L, -1) << log::endl;
 	}
 }
 
