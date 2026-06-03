@@ -100,9 +100,10 @@ int l_db_query(lua_State* L) {
 
 	sqlite3_stmt* stmt;
 	if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-		lerr << "SQL Error: " << sqlite3_errmsg(db) << log::endl;
-		lua_newtable(L);
-		return 1;
+		const char* errMsg = sqlite3_errmsg(db);
+		lua_pushnil(L);
+		lua_pushstring(L, errMsg);
+		return 2;
 	}
 
 	lua_newtable(L);
