@@ -8,6 +8,10 @@
 #include <cstdint>
 #include <exception>
 #include <filesystem>
+#include <chrono>
+#include <iomanip>
+#include <sstream>
+#include <ctime>
 
 class Config {
 	std::unordered_map<std::string, std::string> configs;
@@ -21,7 +25,7 @@ public:
 		std::string ln, section = "global";
 		std::ifstream ifs(cfgPath);
 		size_t pos;
-		if (!ifs.is_open()) 
+		if (!ifs.is_open())
 			return false;
 
 		while (std::getline(ifs, ln)) {
@@ -49,7 +53,7 @@ public:
 				configs[fullKey] = val;
 			}
 		}
-		return true;	
+		return true;
 	}
 	std::string getConfig(std::string section, std::string config, std::string def) {
 		if (!section.empty() && section[0] != '[' && section.back() != ']')
@@ -73,7 +77,7 @@ public:
 		if (val.empty())
 			return def;
 
-		if (std::filesystem::path(val).is_absolute()) 
+		if (std::filesystem::path(val).is_absolute())
 			return val;
 		return baseDir + "/" + val;
 	}
@@ -81,34 +85,70 @@ public:
 
 extern Config globalCfg;
 
-enum eLogLevel {
-	INFO,
-	WARN,
-	ERROR,
-	LOG_MAX,
-};
 
-class Logger {
-	std::string logStr[LOG_MAX] = {
-		[INFO] = "INFO",
-		[WARN] = "WARN",
-		[ERROR] = "ERROR",
-	};
 
-	bool toFile = false;
-	eLogLevel lvl;
-public:
-	Logger() = default;
-	Logger(eLogLevel lvl) : lvl(lvl) {
+namespace log {
+	inline std::string getTimestamp() {
+		using namespace std::chrono;
+		auto now = system_clock::now();
+		auto ms = duration_cast<milliseconds>(now.time_since_epoch()) % 1000;
+		auto timer = system_clock::to_time_t(now);
+		std::tm bt{};
+		localtime_r(&timer, &bt);
+		std::ostringstream oss;
+		oss << "[" << std::put_time(&bt, "%Y-%m-%d %H:%M:%S");
+		oss << '.' << std::setfill('0') << std::setw(3) << ms.count() << "] ";
+		return oss.str();
 	}
 
-	template <typename T>
-	Logger &operator<<(const T& val) {
-		std::cout << val;
-            return *this;
-        }
-};
+	struct EndLine {};
+	const EndLine endl;
 
-extern Logger logger;
+	enum eLogLevel {
+		DEBUG,
+		INFO,
+		WARN,
+		ERROR,
+		LOG_MAX,
+	};
+
+	class Logger {
+		std::string logStr[LOG_MAX] = {
+			[DEBUG] = "DEBUG",
+			[INFO] = "INFO",
+			[WARN] = "WARN",
+			[ERROR] = "ERROR",
+		};
+
+		bool toFile = false;
+		eLogLevel lvl;
+		bool isNewLine = true;
+	public:
+		Logger() : lvl(INFO), isNewLine(true) {}
+		Logger(eLogLevel lvl) : lvl(lvl), isNewLine(true) {}
+
+		template <typename T>
+		Logger &operator<<(const T& val) {
+			if (isNewLine) {
+				std::cout << log::getTimestamp() << "[" << logStr[lvl] << "] ";
+				isNewLine = false;
+			}
+			std::cout << val;
+
+			return *this;
+		}
+		Logger &operator<<(const EndLine&) {
+			std::cout << "\n" << std::flush;
+			isNewLine = true;
+			return *this;
+		}
+	};
+}
+
+extern log::Logger linfo;
+extern log::Logger lwarn;
+extern log::Logger lerr;
+extern log::Logger ldbg;
+
 
 #endif // __CONFIG_H__

@@ -6,7 +6,10 @@
 #include <misc.h>
 #include <server.h>
 
-Logger logger(INFO);
+log::Logger linfo(log::INFO);
+log::Logger lwarn(log::WARN);
+log::Logger lerr(log::ERROR);
+log::Logger ldbg(log::DEBUG);
 
 Config globalCfg;
 

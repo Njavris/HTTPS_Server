@@ -28,18 +28,18 @@ Server::Server(Config &cfg) :
 	serveFile = cfg.getConfigFS("server", "serve_file", "");
 	sqlDbFile = cfg.getConfigFS("server", "sql_db_file", "");
 
-	std::cout << "Launching server on port " << port << std::endl;
-	std::cout << "Keys: " << std::endl;
-	std::cout << "\t" << certPath << std::endl;
-	std::cout << "\t" << keyPath << std::endl;
-	std::cout << "Security option: " << protocols << std::endl;
-	std::cout << "Max connection count: " << maxConnections << std::endl;
-	std::cout << "Worker pool size: " << numThreads << std::endl;
-	std::cout << "Max request size: " << maxReqSize << std::endl;
-	std::cout << "Serving file: " << serveFile << std::endl;
+	linfo << "Launching server on port " << port << log::endl;
+	linfo << "Keys: " << log::endl;
+	linfo << "\t" << certPath << log::endl;
+	linfo << "\t" << keyPath << log::endl;
+	linfo << "Security option: " << protocols << log::endl;
+	linfo << "Max connection count: " << maxConnections << log::endl;
+	linfo << "Worker pool size: " << numThreads << log::endl;
+	linfo << "Max request size: " << maxReqSize << log::endl;
+	linfo << "Serving file: " << serveFile << log::endl;
 
 	if (keyPath.empty() || certPath.empty()) {
-		std::cerr << "Failed to find ssl keys" << std::endl;
+		lerr << "Failed to find ssl keys" << log::endl;
 		exit(-1);
 	}
 
@@ -51,7 +51,7 @@ Server::Server(Config &cfg) :
 
 	if (tls_config_set_cert_file(config, certPath.data()) != 0 ||
 			tls_config_set_key_file(config, keyPath.data()) != 0) {
-		std::cerr << "Cert/Key error: " << tls_config_error(config) << std::endl;
+		lerr << "Cert/Key error: " << tls_config_error(config) << log::endl;
 		exit(-1);
 	}
 
@@ -71,7 +71,7 @@ Server::Server(Config &cfg) :
 	listen(fd, SOMAXCONN);
 
 	if (pipe(wakePipe) == -1) {
-		std::cerr << "Failed to open pipe" << std::endl;
+		lerr << "Failed to open pipe" << log::endl;
 		perror("pipe");
 		exit(-1);
 	}
@@ -184,7 +184,7 @@ void Server::httpParse(Client &c, int idx) {
 		if (c.request.contentLength == 0) {
 			c.request.parseState = HttpRequest::COMPLETE;
 		} else if (c.request.contentLength > maxReqSize) {
-			std::cerr << "Client requesting " << c.request.contentLength << ". Dropping" << std::endl;
+			lerr << "Client requesting " << c.request.contentLength << ". Dropping" << log::endl;
 			c.request.parseState = HttpRequest::INVALID;
 			return;
 		}
@@ -215,7 +215,7 @@ void Server::run() {
 		if (nfds < 0) {
 			if (errno == EINTR)
 				continue;
-			std::cerr << "Poll error" << std::endl;
+			lerr << "Poll error" << log::endl;
 			break;
 		}
 
@@ -228,7 +228,7 @@ void Server::run() {
 			struct tls* cCtx;
 			if (!tls_accept_socket(ctx, &cCtx, cFd)) {
 				if (clients.size() <= maxConnections) {
-					std::cout << "New client" << std::endl;
+					linfo << "New client" << log::endl;
 					clients.push_back({cCtx, cFd});
 
 					clients.back().lastActivity = std::chrono::steady_clock::now();
@@ -252,10 +252,10 @@ void Server::run() {
 					auto &c = clients[i];
 					if (c.fd == res.client_fd) {
 						std::string data = res.serialize();
-						std::cout << "Sending Response" << std::endl;
+						linfo << "Sending Response" << log::endl;
 						int r = tls_write(c.ctx, data.c_str(), data.size());
 						if (r < 0) {
-							std::cerr << "Write failed, cleaning up client" << std::endl;
+							lerr << "Write failed, cleaning up client" << log::endl;
 							freeClient(i); 
 						} else {
 							c.reset();
@@ -279,7 +279,7 @@ void Server::run() {
 				} else if (h == TLS_WANT_POLLIN || h == TLS_WANT_POLLOUT) {
 					continue;
 				} else {
-					std::cerr << "Handshake failed: " << tls_error(c.ctx) << std::endl;
+					lerr << "Handshake failed: " << tls_error(c.ctx) << log::endl;
 					freeClient(i);
 					continue;
 				}
@@ -298,7 +298,7 @@ void Server::run() {
 				if (r == TLS_WANT_POLLIN || r == TLS_WANT_POLLOUT) {
 					continue;
 		  		} else if (r < 0) {
-					std::cerr << "TLS Read Error: " << tls_error(c.ctx) << std::endl;
+					lerr << "TLS Read Error: " << tls_error(c.ctx) << log::endl;
 					freeClient(i);
 				} else {
 					c.state = Client::PARSING;
@@ -325,7 +325,7 @@ void Server::run() {
 
 							if (lua_pcall(L, 2, 0, 0) != LUA_OK) {
 								const char* error_msg = lua_tostring(L, -1);
-								std::cerr << "CRITICAL LUA ERROR: " << (error_msg ? error_msg : "Unknown") << std::endl;
+								lerr << "CRITICAL LUA ERROR: " << (error_msg ? error_msg : "Unknown") << log::endl;
 								lua_pop(L, 1);
 
 								// Fallback: Send a 500 error if Lua fails

@@ -1,9 +1,10 @@
 #include <iostream>
 
 #include <worker.h>
+#include <misc.h>
 
 WorkerPool::WorkerPool(int poolSize) : run(true), start_times(poolSize) {
-	std::cout << "Spawning pool with size " << poolSize << std::endl;
+	linfo << "Spawning pool with size " << poolSize << log::endl;
 	for (size_t i = 0; i < poolSize; ++i) {
 		start_times[i] = 0;
 		workers.emplace_back([this, i] {
@@ -32,7 +33,7 @@ WorkerPool::WorkerPool(int poolSize) : run(true), start_times(poolSize) {
 			for (size_t i = 0; i < start_times.size(); ++i) {
 				int64_t s = start_times[i];
 				if (s > 0 && (now - s) > 10) 
-				std::cerr << "Worker " << i << " stuck!\n";
+				lerr << "Worker " << i << " stuck!\n";
 			}
 		}
 	}).detach();
