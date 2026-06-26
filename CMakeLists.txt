@@ -69,12 +69,6 @@ if (NOT EXISTS ${SQLITE_C})
 	endif ()
 endif ()
 
-if (NOT ${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
-	# target_link_options (server PRIVATE -static)
-	# don't warn about executable stack:
-	target_link_options (server PRIVATE "-Wl,-z,noexecstack")
-endif ()
-
 set (TARGET_NAME server) 
 
 add_executable (${TARGET_NAME}
@@ -84,6 +78,12 @@ add_executable (${TARGET_NAME}
 	"src/lua_bnd.cpp"
 	"${SQLITE_DIR}/sqlite3.c"
 )
+
+if (NOT ${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+	# target_link_options (server PRIVATE -static)
+	# don't warn about executable stack:
+	target_link_options (server PRIVATE "-Wl,-z,noexecstack")
+endif ()
 
 target_compile_features(${TARGET_NAME} PRIVATE cxx_std_17)
 
