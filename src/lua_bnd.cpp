@@ -215,6 +215,7 @@ int l_save_file(lua_State* L) {
 }
 
 int l_db_exec_blob(lua_State* L) {
+	bool ret = true;
 	const char* sql = luaL_checkstring(L, 1);
 	lua_getfield(L, LUA_REGISTRYINDEX, "db_handle");
 	sqlite3* db = (sqlite3*)lua_touserdata(L, -1);
@@ -223,21 +224,21 @@ int l_db_exec_blob(lua_State* L) {
 	const char* data = lua_tolstring(L, 2, &len); 
 
 	sqlite3_stmt* stmt;
-	if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
-		lua_pushboolean(L, 0);
-		return 1;
+	if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+		const char* errMsg = sqlite3_errmsg(db);
+		lua_pushnil(L);
+		lua_pushstring(L, errMsg);
+		return 2;
 	}
 
 	sqlite3_bind_blob(stmt, 1, data, len, SQLITE_TRANSIENT);
 
 	if (sqlite3_step(stmt) != SQLITE_DONE) {
-		sqlite3_finalize(stmt);
-		lua_pushboolean(L, 0);
-		return 1;
+		ret = false;
 	}
 
 	sqlite3_finalize(stmt);
-	lua_pushboolean(L, 1);
+	lua_pushboolean(L, ret);
 	return 1;
 }
 
