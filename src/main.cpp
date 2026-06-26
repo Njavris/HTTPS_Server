@@ -5,6 +5,7 @@
 
 #include <misc.h>
 #include <server.h>
+#include <signal.h>
 
 log::Logger linfo(log::INFO);
 log::Logger lwarn(log::WARN);
