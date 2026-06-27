@@ -203,7 +203,13 @@ int l_save_file(lua_State* L) {
 	size_t len;
 	const char* data = luaL_checklstring(L, 2, &len);
 
-	std::ofstream out(std::string("uploads/") + filename, std::ios::binary);
+	std::string safeFilename = std::filesystem::path(filename).filename().string();
+	if (safeFilename.empty() || safeFilename == "." || safeFilename == "..") {
+		lua_pushboolean(L, false);
+		return 1;
+	}
+
+	std::ofstream out(std::string("uploads/") + safeFilename, std::ios::binary);
 	if (!out) {
 		lua_pushboolean(L, false);
 		return 1;
