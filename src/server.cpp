@@ -268,6 +268,15 @@ void Server::run() {
 
 		for (int i = clients.size() - 1; i >= 0; i--) {
 			Client &c = clients[i];
+
+			auto now = std::chrono::steady_clock::now();
+			if (std::chrono::duration_cast<std::chrono::seconds>
+					(now - c.lastActivity).count() > timeout) {
+				linfo << "Connection timeout for client ";
+				linfo << c.fd << "(" << i << ")" << log::endl;
+				freeClient(i);
+				continue;
+			}
 			if (c.fd < 0)
 				continue;
 
