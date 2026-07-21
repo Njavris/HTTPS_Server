@@ -62,6 +62,7 @@ Server::Server(Config &cfg) :
 	fd = socket(AF_INET, SOCK_STREAM, 0);
 	int opt = 1;
 	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+	fcntl(fd, F_SETFL, O_NONBLOCK);
 
 	struct sockaddr_in addr = {};
 	addr.sin_family = AF_INET;
@@ -202,16 +203,25 @@ void Server::httpParse(Client &c, int idx) {
 
 void Server::run() {
 	std::vector<struct pollfd> pfds;
+	fcntl(fd, F_SETFL, O_NONBLOCK);
 	while (true) {
 		pfds.clear();
 		pfds.push_back({fd, POLLIN, 0}); // Listener
-
 		pfds.push_back({wakePipe[0], POLLIN, 0});
 
-		for (auto &c : clients)
-			pfds.push_back({c.fd, POLLIN | POLLERR, 0});
+		for (auto &c : clients) {
+			short events = POLLERR | POLLHUP;
+			if (c.writePending)
+				events |= POLLOUT;
+			else
+				events |= POLLIN;
+			pfds.push_back({c.fd, events, 0});
+		}
 
-		int nfds = poll(&pfds[0], pfds.size(), -1);
+		size_t polledClientsCount = clients.size();
+
+		int nfds = poll(&pfds[0], pfds.size(), 1000);
+
 		if (nfds < 0) {
 			if (errno == EINTR)
 				continue;
@@ -224,21 +234,30 @@ void Server::run() {
 
 		// Listener accepts client
 		if (pfds[0].revents & POLLIN) {
-			int cFd = accept(fd, nullptr, nullptr);
-			struct tls* cCtx;
-			if (!tls_accept_socket(ctx, &cCtx, cFd)) {
-				if (clients.size() <= maxConnections) {
-					linfo << "New client" << log::endl;
-					clients.push_back({cCtx, cFd});
+			while (true) {
+				int cFd = accept(fd, nullptr, nullptr);
+				if (cFd < 0)
+					break;
 
-					clients.back().lastActivity = std::chrono::steady_clock::now();
+				fcntl(cFd, F_SETFL, O_NONBLOCK);
+
+				struct tls* cCtx = nullptr;
+				if (!tls_accept_socket(ctx, &cCtx, cFd)) {
+					if (clients.size() < maxConnections) {
+						linfo << "New client" << log::endl;
+						clients.push_back({cCtx, cFd});
+						clients.back().lastActivity =
+							std::chrono::steady_clock::now();
+					} else {
+						if (cCtx)
+							tls_free(cCtx);
+						close(cFd);
+					}
 				} else {
-					tls_free(cCtx);
+					if (cCtx)
+						tls_free(cCtx);
 					close(cFd);
 				}
-			} else {
-				tls_free(cCtx);
-				close(cFd);
 			}
 		}
 
@@ -266,7 +285,10 @@ void Server::run() {
 			}
 		}
 
-		for (int i = clients.size() - 1; i >= 0; i--) {
+		for (int i = (int)polledClientsCount - 1; i >= 0; i--) {
+			if (i >= (int)clients.size())
+				continue;
+
 			Client &c = clients[i];
 
 			auto now = std::chrono::steady_clock::now();
@@ -280,20 +302,6 @@ void Server::run() {
 			if (c.fd < 0)
 				continue;
 
-			if (!c.handshake) {
-				int h = tls_handshake(c.ctx);
-				if (h == 0) {
-					c.handshake = true;
-					continue;
-				} else if (h == TLS_WANT_POLLIN || h == TLS_WANT_POLLOUT) {
-					continue;
-				} else {
-					lerr << "Handshake failed: " << tls_error(c.ctx) << log::endl;
-					freeClient(i);
-					continue;
-				}
-			}
-
 			int revents = pfds[i + 2].revents;
 
 			if (revents & (POLLERR | POLLHUP)) {
@@ -301,13 +309,38 @@ void Server::run() {
 				continue;
 			}
 
+			if (!c.handshake) {
+				if (revents & (POLLIN | POLLOUT)) {
+					int h = tls_handshake(c.ctx);
+					if (h == 0) {
+						c.handshake = true;
+						c.writePending = false;
+						c.lastActivity = now;
+					} else if (h == TLS_WANT_POLLIN) {
+						c.writePending = false;
+					} else if (h == TLS_WANT_POLLOUT) {
+						c.writePending = true;
+					} else {
+						lerr << "Handshake failed: ";
+						lerr << tls_error(c.ctx) << log::endl;
+						freeClient(i);
+						continue;
+					}
+				}
+				continue;
+			}
+
 			if (revents & POLLIN) {
 				char readBuf[4096];
 				int r = tls_read(c.ctx, readBuf, sizeof(readBuf));
 				if (r == TLS_WANT_POLLIN || r == TLS_WANT_POLLOUT) {
+					c.writePending = (r == TLS_WANT_POLLOUT);
 					continue;
-		  		} else if (r < 0) {
-					lerr << "TLS Read Error: " << tls_error(c.ctx) << log::endl;
+		  		} else if (r <= 0) {
+					if (r < 0) {
+						lerr << "TLS Read Error: ";
+						lerr << tls_error(c.ctx) << log::endl;
+					}
 					freeClient(i);
 				} else {
 					c.state = Client::PARSING;

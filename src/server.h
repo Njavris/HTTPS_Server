@@ -37,6 +37,7 @@ struct Client {
 	struct tls *ctx;
 	int fd;
 	bool handshake = false;
+	bool writePending = false;
 	std::vector<char> buffer;
 	size_t parsePos = 0;
 
@@ -49,6 +50,7 @@ struct Client {
 		parsePos = 0;
 		buffer.clear();
 		state = IDLE;
+		writePending = false;
 	}
 };
 
