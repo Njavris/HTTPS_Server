@@ -266,7 +266,7 @@ int l_proxy_to_backend(lua_State* L) {
 	std::string orig_uri = lua_isstring(L, -1) ? lua_tostring(L, -1) : "/";
 	lua_pop(L, 1);
 
-	std::string target_path = (path_override && strlen(path_override) > 0) ? path_override : orig_uri;
+	std::string target_path = (path_override && path_override[0] != '\0') ? path_override : orig_uri;
 
 	lua_getfield(L, 5, "body");
 	std::string body;
