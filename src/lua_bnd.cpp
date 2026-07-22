@@ -3,6 +3,9 @@
 #include <openssl/sha.h>
 #include <openssl/rand.h>
 #include <unistd.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 
 #include <lua_bnd.h>
 #include <misc.h>
@@ -248,6 +251,139 @@ int l_db_exec_blob(lua_State* L) {
 	return 1;
 }
 
+int l_proxy_to_backend(lua_State* L) {
+	int client_fd = (int)luaL_checkinteger(L, 1);
+	const char* target_host = luaL_checkstring(L, 2);
+	int target_port = (int)luaL_checkinteger(L, 3);
+	const char* path_override = luaL_optstring(L, 4, nullptr);
+	luaL_checktype(L, 5, LUA_TTABLE);
+
+	lua_getfield(L, 5, "method");
+	std::string method = lua_isstring(L, -1) ? lua_tostring(L, -1) : "GET";
+	lua_pop(L, 1);
+
+	lua_getfield(L, 5, "uri");
+	std::string orig_uri = lua_isstring(L, -1) ? lua_tostring(L, -1) : "/";
+	lua_pop(L, 1);
+
+	std::string target_path = (path_override && strlen(path_override) > 0) ? path_override : orig_uri;
+
+	lua_getfield(L, 5, "body");
+	std::string body;
+	if (lua_isstring(L, -1)) {
+		size_t len;
+		const char* b = lua_tolstring(L, -1, &len);
+		body.assign(b, len);
+	}
+	lua_pop(L, 1);
+
+	int sock = socket(AF_INET, SOCK_STREAM, 0);
+	if (sock < 0) {
+		lua_pushboolean(L, false);
+		return 1;
+	}
+
+	struct sockaddr_in target_addr{};
+	target_addr.sin_family = AF_INET;
+	target_addr.sin_port = htons(target_port);
+	inet_pton(AF_INET, target_host, &target_addr.sin_addr);
+
+	if (connect(sock, (struct sockaddr*)&target_addr, sizeof(target_addr)) < 0) {
+		close(sock);
+		HttpResponse res;
+		res.client_fd = client_fd;
+		res.status_code = 502;
+		res.body = "502 Bad Gateway: Could not connect to backend server";
+		global_send_queue.push(std::move(res));
+		char wake = 1;
+		(void)!write(wakePipe[1], &wake, 1);
+		lua_pushboolean(L, false);
+		return 1;
+	}
+
+	std::ostringstream req_stream;
+	req_stream << method << " " << target_path << " HTTP/1.1\r\n";
+	req_stream << "Host: " << target_host << ":" << target_port << "\r\n";
+	req_stream << "Connection: close\r\n";
+
+	lua_getfield(L, 5, "headers");
+	if (lua_istable(L, -1)) {
+		lua_pushnil(L);
+		while (lua_next(L, -2)) {
+			if (lua_isstring(L, -2) && lua_isstring(L, -1)) {
+				std::string k = lua_tostring(L, -2);
+				std::string v = lua_tostring(L, -1);
+				if (k != "HOST" && k != "CONNECTION" && k != "Host" && k != "Connection") {
+					req_stream << k << ": " << v << "\r\n";
+				}
+			}
+			lua_pop(L, 1);
+		}
+	}
+	lua_pop(L, 1);
+
+	if (!body.empty()) {
+		req_stream << "Content-Length: " << body.size() << "\r\n";
+	}
+	req_stream << "\r\n";
+	req_stream << body;
+
+	std::string req_data = req_stream.str();
+	send(sock, req_data.data(), req_data.size(), 0);
+
+	std::string raw_response;
+	char buf[4096];
+	ssize_t bytes_read;
+	while ((bytes_read = recv(sock, buf, sizeof(buf), 0)) > 0) {
+		raw_response.append(buf, bytes_read);
+	}
+	close(sock);
+
+	HttpResponse res;
+	res.client_fd = client_fd;
+	res.status_code = 502;
+
+	size_t header_end = raw_response.find("\r\n\r\n");
+	if (header_end != std::string::npos) {
+		std::string header_part = raw_response.substr(0, header_end);
+		res.body = raw_response.substr(header_end + 4);
+
+		std::istringstream hstream(header_part);
+		std::string status_line;
+		if (std::getline(hstream, status_line)) {
+			std::istringstream sl_stream(status_line);
+			std::string http_ver;
+			int code = 200;
+			sl_stream >> http_ver >> code;
+			if (code > 0) res.status_code = code;
+		}
+
+		std::string line;
+		while (std::getline(hstream, line)) {
+			if (!line.empty() && line.back() == '\r') line.pop_back();
+			size_t colon = line.find(':');
+			if (colon != std::string::npos) {
+				std::string hk = line.substr(0, colon);
+				std::string hv = line.substr(colon + 1);
+				if (!hv.empty() && hv[0] == ' ') hv.erase(0, 1);
+				if (hk != "Transfer-Encoding" && hk != "Content-Length") {
+					res.headers.push_back({hk, hv});
+				}
+			}
+		}
+	} else {
+		res.body = raw_response;
+		res.status_code = 200;
+	}
+
+	global_send_queue.push(std::move(res));
+	char wake = 1;
+	(void)!write(wakePipe[1], &wake, 1);
+
+	lua_pushboolean(L, true);
+	return 1;
+}
+
 LuaThreadEnv::LuaThreadEnv() {
 	L = luaL_newstate();
 	luaL_openlibs(L);
@@ -269,6 +405,7 @@ LuaThreadEnv::LuaThreadEnv() {
 	lua_register(L, "verify_password", l_verify_password);
 	lua_register(L, "generate_token", l_generate_token);
 	lua_register(L, "save_file", l_save_file);
+	lua_register(L, "proxy_to_backend", l_proxy_to_backend);
 
 	if (luaL_dofile(L, serveFile.c_str()) != LUA_OK) {
 		lerr << "Lua Load Error: " << lua_tostring(L, -1) << log::endl;
